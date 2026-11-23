@@ -78,14 +78,14 @@ The skills, scripts and data are plain Markdown, Python and JSON, so any agent t
 | These instructions | Loaded automatically (`CLAUDE.md` imports this file) | Loaded automatically if your agent reads `AGENTS.md`; otherwise read this file first |
 | Commands (`/fluent-learn`, …) | Native skills, typed as slash commands | When the learner types the command (or its name), read `.claude/skills/<name>/SKILL.md` and follow it from its first step |
 | Helper skills | Auto-loaded when needed | Read `.claude/skills/<name>/SKILL.md` yourself when a skill refers to it |
-| Hooks (`.claude/hooks/hooks.json`, `.claude/settings.json`) | Run automatically | Not run. Do the two that matter by hand: run `read-db.py` at session start, and `update-db.py` at session end (it backs up before writing) |
+| Hooks (`.claude/hooks/hooks.json`, `.claude/settings.json`) | Run automatically | Codex (`.codex/hooks.json`), Devin (`.claude/settings.json` + `.devin/hooks.v1.json`) and Antigravity CLI (`.agents/hooks.json`) run the same scripts automatically — Codex asks you to trust them once via `/hooks`. In any other agent they don't run: do the two that matter by hand — `read-db.py` at session start, `update-db.py` at session end (it backs up before writing) |
 | Asking the learner structured questions | `AskUserQuestion` tool | Use your agent's own question tool if it has one; otherwise ask in a plain message and wait |
 
 Notes for agents other than Claude Code:
 
 - **Paths.** Skills write commands as `"${CLAUDE_PLUGIN_ROOT:-${CLAUDE_PROJECT_DIR:-.}}/.claude/hooks/…"`. Outside Claude Code both variables are unset, so this resolves to the repository root — run commands from there.
 - **Skill frontmatter** (`allowed-tools`, `disable-model-invocation`, …) is Claude Code metadata. Ignore the syntax, but respect the intent described above: learner-facing skills start only on the learner's explicit request.
-- **Safety nets you don't get.** Without hooks there is no automatic JSON validation after edits and no answer-leak guard, so the Critical Rules below are entirely on you — in particular, end every exercise message at its prompt line.
+- **Safety nets you don't get.** In an agent with no hook config above, there is no automatic JSON validation after edits and no answer-leak guard, so the Critical Rules below are entirely on you — in particular, end every exercise message at its prompt line.
 - **Python.** The scripts need Python 3.8+ and nothing else. If `python3` is not available on your system (common on Windows), use `python` or `py`.
 
 ## Learning Principles (Evidence-Based)

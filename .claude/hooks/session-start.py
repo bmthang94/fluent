@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fluent_paths import data_dir, force_utf8_io  # noqa: E402
+from fluent_paths import data_dir, emit, force_utf8_io  # noqa: E402
 
 force_utf8_io()
 
@@ -21,12 +21,14 @@ def main():
     except Exception:
         pass
 
+    lines = []
     data = data_dir()
     profile_path = data / "learner-profile.json"
 
     if not profile_path.exists():
-        print("[Fluent] 🌍 Welcome to Fluent - The AI Language Learning Kit!")
-        print("[Fluent] 📝 Run /fluent-setup to create your personalized learning profile")
+        lines.append("[Fluent] 🌍 Welcome to Fluent - The AI Language Learning Kit!")
+        lines.append("[Fluent] 📝 Run /fluent-setup to create your personalized learning profile")
+        emit(lines, "SessionStart")
         sys.exit(0)
 
     try:
@@ -40,10 +42,10 @@ def main():
         target_level = learner.get("target_level", "...")
         streak = profile.get("current_streak_days", 0)
 
-        print(f"[Fluent] 🌍 Welcome back, {name}!")
-        print(f"[Fluent] 📚 Learning: {target_lang}")
-        print(f"[Fluent] 🎯 Level: {current_level} → {target_level}")
-        print(f"[Fluent] 🔥 Streak: {streak} days")
+        lines.append(f"[Fluent] 🌍 Welcome back, {name}!")
+        lines.append(f"[Fluent] 📚 Learning: {target_lang}")
+        lines.append(f"[Fluent] 🎯 Level: {current_level} → {target_level}")
+        lines.append(f"[Fluent] 🔥 Streak: {streak} days")
 
         sr_path = data / "spaced-repetition.json"
         if sr_path.exists():
@@ -62,7 +64,7 @@ def main():
                         due_count += 1
 
                 if due_count > 0:
-                    print(f"[Fluent] 📅 {due_count} items due for review today - Run /fluent-review!")
+                    lines.append(f"[Fluent] 📅 {due_count} items due for review today - Run /fluent-review!")
 
             except Exception:
                 pass
@@ -70,6 +72,7 @@ def main():
     except Exception as e:
         print(f"[Fluent] Error loading profile: {e}", file=sys.stderr)
 
+    emit(lines, "SessionStart")
     sys.exit(0)
 
 

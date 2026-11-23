@@ -18,5 +18,10 @@ mkdir -p "$BACKUP_DIR"
 
 if compgen -G "$DATA_DIR"/*.json > /dev/null; then
   find "$DATA_DIR" -maxdepth 1 -name "*.json" -exec cp {} "$BACKUP_DIR/" \;
-  echo "[Fluent] 🔒 Pre-compact backup saved to $BACKUP_DIR"
+  MSG="[Fluent] 🔒 Pre-compact backup saved to $BACKUP_DIR"
+  if [ "${1:-}" = "--json" ]; then
+    MSG="$MSG" python3 -c "import json, os; print(json.dumps({'systemMessage': os.environ['MSG']}, ensure_ascii=False))"
+  else
+    echo "$MSG"
+  fi
 fi

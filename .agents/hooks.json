@@ -1,0 +1,37 @@
+{
+  "fluent": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/agy-hook.py\" SessionStart",
+        "timeout": 10
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/agy-hook.py\" PreInvocation",
+        "timeout": 10
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "write_to_file|replace_file_content|multi_replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/agy-hook.py\" PostToolUse",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/agy-hook.py\" Stop",
+        "timeout": 15
+      }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "PostToolUse": [
+    {
+      "matcher": "^(edit|write|apply_patch)$",
+      "hooks": [
+        {
+          "type": "command",
+          "description": "Validate JSON and back up data files after modifications (Devin tool names are lowercase)",
+          "command": "python3 \"$DEVIN_PROJECT_DIR/.claude/hooks/validate-data.py\"",
+          "timeout": 10
+        }
+      ]
+    }
+  ]
+}

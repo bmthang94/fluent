@@ -106,6 +106,23 @@ Hooks ensure your learning data is:
 
 ---
 
+## 🤖 Other Agents
+
+The scripts here are shared; each agent only needs its own thin config.
+
+| Agent | Config | Notes |
+|-------|--------|-------|
+| Claude Code | `.claude/settings.json` | Reference implementation |
+| Codex | `.codex/hooks.json` | Run `/hooks` once to review and trust. Commands pass `--json` because Codex parses stdout starting with `[` as JSON. Edits arrive as `apply_patch`, so `validate-data.py` reads file paths from the patch headers |
+| Devin | `.claude/settings.json` (auto-imported) + `.devin/hooks.v1.json` | Devin sets `CLAUDE_PROJECT_DIR`, so the Claude config already works; `.devin/hooks.v1.json` only adds the lowercase `edit`/`write` matcher. JSON output is auto-selected through `AI_AGENT`. No PreCompact event |
+| Antigravity CLI (`agy`) | `.agents/hooks.json` | Different contract; `agy-hook.py` translates it. No SessionEnd (run on `Stop`) and no UserPromptSubmit (`PreInvocation` + `lastUserInput`) |
+
+`answer-leak-guard.py` decides whether a conversation is a practice session from a
+marker written when a prompt starts with a practice command (`/fluent-vocab`,
+`$fluent-vocab`, ...). Markers live in `<tempdir>/fluent-guard/`.
+
+---
+
 ## 🔧 How It Works
 
 ### Hook Configuration

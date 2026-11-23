@@ -20,6 +20,7 @@ to unrelated work.
 import json
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -124,6 +125,40 @@ SESSION_COMMAND = re.compile(
 )
 
 
+# Agents with no Claude-style command record in their transcript (Codex, Devin,
+# Antigravity) are gated on the prompt itself: a practice command at the START of
+# a learner prompt ("/fluent-vocab", "$fluent-vocab", "fluent-vocab", plugin form
+# "fluent:fluent-vocab") drops a per-session marker that Stop and later prompts
+# check. Anchoring at the start keeps "fix the bug in fluent-vocab" from
+# switching the guard on.
+PRACTICE_PROMPT = re.compile(
+    r"^\s*[/$]?(?:[\w-]+:)?fluent-(?:learn|vocab|review|writing|speaking|reading)\b"
+)
+
+
+def _marker(session_id):
+    safe = re.sub(r"[^\w.-]", "_", str(session_id or ""))
+    return Path(tempfile.gettempdir()) / "fluent-guard" / safe if safe else None
+
+
+def marked_session(session_id, prompt=""):
+    """True if a practice command started this session; records it on first sight.
+
+    Any filesystem error means "not a Fluent session" — the guard stays silent.
+    """
+    marker = _marker(session_id)
+    if marker is None:
+        return False
+    try:
+        if PRACTICE_PROMPT.search(prompt or ""):
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.touch()
+            return True
+        return marker.exists()
+    except OSError:
+        return False
+
+
 def _user_text(entry):
     """Text the user typed in a transcript entry ('' for tool results etc.)."""
     if entry.get("type") != "user":
@@ -200,19 +235,24 @@ def main():
 
     event = payload.get("hook_event_name", "")
     transcript = payload.get("transcript_path")
+    session_id = payload.get("session_id")
+    prompt = str(payload.get("prompt") or "")
 
     if event == "UserPromptSubmit":
-        if in_fluent_session(transcript, str(payload.get("prompt") or "")):
+        if marked_session(session_id, prompt) or in_fluent_session(transcript, prompt):
             print(REMINDER)
         sys.exit(0)
 
     if event != "Stop" or payload.get("stop_hook_active"):
         sys.exit(0)  # already re-prompted once; never loop
 
-    if not transcript or not in_fluent_session(transcript):
+    if not (marked_session(session_id) or (transcript and in_fluent_session(transcript))):
         sys.exit(0)  # not a Fluent practice session — stay out of the way
 
-    leak = find_leak(last_assistant_text(transcript))
+    text = payload.get("last_assistant_message") or (
+        last_assistant_text(transcript) if transcript else ""
+    )
+    leak = find_leak(text)
     if leak:
         print(json.dumps({"decision": "block", "reason": BLOCK_REASON % leak}))
 
@@ -321,6 +361,27 @@ def selftest():
             os.unlink(path)
     assert in_fluent_session(None, "/fluent-vocab") is False, "bare prompt text is not a command record"
     assert in_fluent_session("/nonexistent/transcript.jsonl") is False, "unreadable transcript = off"
+
+    # Prompt-anchored gate for agents without Claude's command record.
+    for prompt, expected in [
+        ("/fluent-vocab", True),
+        ("$fluent-review please", True),
+        ("fluent-learn", True),
+        ("  /fluent:fluent-writing", True),
+        ("/fluent-setup", False),
+        ("fix the bug in fluent-vocab", False),
+        ("", False),
+    ]:
+        sid = "selftest-%d" % abs(hash(prompt))
+        marker = _marker(sid)
+        try:
+            assert marked_session(sid, prompt) is expected, "prompt gate: %r" % prompt
+            if expected:
+                assert marked_session(sid) is True, "marker must persist: %r" % prompt
+        finally:
+            if marker and marker.exists():
+                marker.unlink()
+    assert marked_session("", "/fluent-vocab") is False, "no session id = off"
 
     print("selftest: all assertions passed")
 

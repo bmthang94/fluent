@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fluent_paths import data_dir, ensure_backups_dir, force_utf8_io  # noqa: E402
+from fluent_paths import data_dir, emit, ensure_backups_dir, force_utf8_io  # noqa: E402
 
 force_utf8_io()
 
@@ -21,6 +21,7 @@ def main():
     except json.JSONDecodeError:
         pass
 
+    lines = []
     backup_dir = ensure_backups_dir() / datetime.now().strftime("%Y%m%d")
     backup_dir.mkdir(parents=True, exist_ok=True)
 
@@ -35,8 +36,8 @@ def main():
                 print(f"[Fluent] Warning: Could not backup {json_file}: {e}", file=sys.stderr)
 
         if backed_up:
-            print(f"[Fluent] 📦 Session backup created: {backup_dir}/")
-            print(f"[Fluent] 💾 Files backed up: {', '.join(backed_up)}")
+            lines.append(f"[Fluent] 📦 Session backup created: {backup_dir}/")
+            lines.append(f"[Fluent] 💾 Files backed up: {', '.join(backed_up)}")
 
     profile_path = data / "learner-profile.json"
     if profile_path.exists():
@@ -47,13 +48,14 @@ def main():
             streak = profile.get("current_streak_days", 0)
             total_sessions = profile.get("total_sessions", 0)
 
-            print(f"[Fluent] 🔥 Current streak: {streak} days")
-            print(f"[Fluent] 📊 Total sessions: {total_sessions}")
-            print(f"[Fluent] 👋 Great work today!")
+            lines.append(f"[Fluent] 🔥 Current streak: {streak} days")
+            lines.append(f"[Fluent] 📊 Total sessions: {total_sessions}")
+            lines.append(f"[Fluent] 👋 Great work today!")
 
         except Exception as e:
             print(f"[Fluent] Could not read stats: {e}", file=sys.stderr)
 
+    emit(lines)
     sys.exit(0)
 
 

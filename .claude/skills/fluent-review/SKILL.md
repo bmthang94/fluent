@@ -1,6 +1,6 @@
 ---
 name: fluent-review
-description: Run today's spaced-repetition review queue — items scheduled by SM-2 that need reinforcement before the learner forgets them. Triggered only when the learner types /fluent-review. Pulls due items from spaced-repetition.review_queue.today, generates a targeted exercise for each, evaluates the response, updates SM-2 parameters, and reshelves items into the correct future queue.
+description: Run today's spaced-repetition review queue — items scheduled by SM-2 that need reinforcement before the learner forgets them. Triggered only when the learner types /fluent-review. Pulls due items from computed.due_review_items, generates a targeted exercise for each, evaluates the response, updates SM-2 parameters, and reshelves items into the correct future queue.
 allowed-tools: Read, Write, Bash
 disable-model-invocation: true
 ---
@@ -25,7 +25,9 @@ Skip this skill when the queue is empty — suggest `/fluent-vocab` or `/fluent-
 python3 "${CLAUDE_PLUGIN_ROOT:-${CLAUDE_PROJECT_DIR:-.}}/.claude/hooks/read-db.py"
 ```
 
-Read `spaced-repetition.review_queue.today` and `daily_limits.review_items_per_day`. Sort items by `priority` (critical → high → medium → low). Cap at the daily limit (usually 20).
+Take `computed.due_review_items` — the reader computes it from each item's `due_date` at read time and sorts it by `priority` (critical → high → medium → low), then earliest `due_date`. Look each id up in `databases.spaced_repetition.items` for its content and scheduling fields, and cap the list at `databases.spaced_repetition.daily_limits.review_items_per_day` (usually 20).
+
+Never select items from `spaced-repetition.review_queue.today` — it is only rebuilt when `update-db.py` runs, so it misses anything that became due since the last session.
 
 If the queue is empty:
 

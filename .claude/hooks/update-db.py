@@ -248,7 +248,8 @@ def update_learner_profile(profile: dict, session: dict):
     last = profile.get("last_updated", "")
 
     if last == today:
-        pass
+        if profile.get("current_streak_days", 0) < 1:
+            profile["current_streak_days"] = 1
     elif last == yesterday(today):
         profile["current_streak_days"] = profile.get("current_streak_days", 0) + 1
     else:
@@ -362,6 +363,7 @@ def update_mistakes_db(mistakes: dict, session: dict):
             pat["next_review"] = tomorrow(today)
             pat["consecutive_incorrect"] = pat.get("consecutive_incorrect", 0) + 1
             pat["consecutive_correct"] = 0
+            pat["mastery_level"] = max(0, pat.get("mastery_level", 0) - 1)
             pat.setdefault("examples", []).append({
                 "incorrect": error.get("your_answer", ""),
                 "correct": error.get("correct_answer", ""),
@@ -433,51 +435,62 @@ def update_mastery_db(mastery: dict, session: dict, progress: dict):
     mastery.setdefault("metadata", {})["last_updated"] = today
 
 
+def apply_sr_review(item: dict, quality: int, today: str, score: int = 0):
+    result = calculate_sm2(item, quality)
+    item["easiness_factor"] = result["easiness_factor"]
+    item["interval_days"] = result["interval_days"]
+    item["repetitions"] = result["repetitions"]
+    item["due_date"] = date_plus_days(today, result["interval_days"])
+    item["last_reviewed"] = today
+    item["last_quality"] = quality
+    item["total_reviews"] = item.get("total_reviews", 0) + 1
+    if quality >= 3:
+        item["consecutive_correct"] = item.get("consecutive_correct", 0) + 1
+        item["consecutive_incorrect"] = 0
+    else:
+        item["consecutive_incorrect"] = item.get("consecutive_incorrect", 0) + 1
+        item["consecutive_correct"] = 0
+        item["mastery_level"] = max(0, item.get("mastery_level", 0) - 1)
+    # Mastery: rough map from repetitions and quality (clamped 0..5)
+    current = item.get("mastery_level", 0)
+    if item["repetitions"] >= 5 and item["consecutive_correct"] >= 3:
+        item["mastery_level"] = min(5, max(current, 3))
+    elif item["repetitions"] >= 2 and item["consecutive_correct"] >= 1 and quality >= 4:
+        item["mastery_level"] = min(5, current + 1)
+    # priority heuristic
+    if item.get("consecutive_incorrect", 0) >= 2:
+        item["priority"] = "high"
+    elif item.get("mastery_level", 0) >= 3:
+        item["priority"] = "low"
+    else:
+        item["priority"] = item.get("priority", "medium")
+    item.setdefault("review_history", []).append({
+        "date": today,
+        "quality": quality,
+        "score": score,
+    })
+
+
 def update_spaced_repetition(sr: dict, session: dict):
     today = session["date"]
     items = sr.setdefault("items", {})
 
+    # One SM-2 update per item per session; a duplicated entry would otherwise
+    # shift the interval twice. Last entry wins.
+    reviews = {}
     for review in session.get("review_results", []):
-        item_id = review["item_id"]
-        quality = review["quality"]
-        if item_id in items:
-            item = items[item_id]
-            result = calculate_sm2(item, quality)
-            item["easiness_factor"] = result["easiness_factor"]
-            item["interval_days"] = result["interval_days"]
-            item["repetitions"] = result["repetitions"]
-            item["due_date"] = date_plus_days(today, result["interval_days"])
-            item["last_reviewed"] = today
-            item["last_quality"] = quality
-            item["total_reviews"] = item.get("total_reviews", 0) + 1
-            if quality >= 3:
-                item["consecutive_correct"] = item.get("consecutive_correct", 0) + 1
-                item["consecutive_incorrect"] = 0
-            else:
-                item["consecutive_incorrect"] = item.get("consecutive_incorrect", 0) + 1
-                item["consecutive_correct"] = 0
-            # Mastery: rough map from repetitions and quality (clamped 0..5)
-            current = item.get("mastery_level", 0)
-            if item["repetitions"] >= 5 and item["consecutive_correct"] >= 3:
-                item["mastery_level"] = min(5, max(current, 3))
-            elif item["repetitions"] >= 2 and item["consecutive_correct"] >= 1 and quality >= 4:
-                item["mastery_level"] = min(5, current + 1)
-            # priority heuristic
-            if item.get("consecutive_incorrect", 0) >= 2:
-                item["priority"] = "high"
-            elif item.get("mastery_level", 0) >= 3:
-                item["priority"] = "low"
-            else:
-                item["priority"] = item.get("priority", "medium")
-            item.setdefault("review_history", []).append({
-                "date": today,
-                "quality": quality,
-                "score": review.get("score", 0),
-            })
+        reviews[review["item_id"]] = review
 
+    for item_id, review in reviews.items():
+        if item_id in items:
+            apply_sr_review(items[item_id], review["quality"], today,
+                            review.get("score", 0))
+
+    created = set()
     for vocab in session.get("new_vocabulary", []):
         item_id = vocab["item_id"]
         if item_id not in items:
+            created.add(item_id)
             items[item_id] = {
                 "id": item_id,
                 "type": vocab.get("item_type", "vocabulary"),
@@ -499,9 +512,24 @@ def update_spaced_repetition(sr: dict, session: dict):
                 "priority": vocab.get("priority", "medium"),
             }
 
+    # A recurring error lapses its existing SR item (unless the session also
+    # reviewed it explicitly); first occurrence wins for review_quality.
+    error_seen = set()
     for error in session.get("errors", []):
         item_id = error["pattern_id"]
-        if item_id not in items:
+        if item_id in items:
+            if item_id in reviews or item_id in error_seen or item_id in created:
+                continue
+            error_seen.add(item_id)
+            try:
+                quality = int(error.get("review_quality", 2))
+            except (TypeError, ValueError):
+                quality = 2
+            quality = max(0, min(5, quality))
+            apply_sr_review(items[item_id], quality, today,
+                            error.get("score", 0))
+        else:
+            created.add(item_id)
             items[item_id] = {
                 "id": item_id,
                 "type": "error_pattern",

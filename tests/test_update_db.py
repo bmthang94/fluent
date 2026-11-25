@@ -20,6 +20,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / ".claude" / "hooks" / "update-db.py"
+READ_SCRIPT = REPO_ROOT / ".claude" / "hooks" / "read-db.py"
 
 
 def make_fixtures(data_dir: Path):
@@ -526,6 +527,189 @@ class UpdateDbSmokeTest(unittest.TestCase):
                 self.assertEqual(proc.returncode, 0, msg=proc.stderr)
                 after = len(self._load("learner-profile.json").get("achievements", []))
                 self.assertEqual(after, before)
+
+    # --- /fluent-review bug fixes ---
+
+    def _error_pattern_item(self, item_id="err_articles", **over):
+        item = {
+            "id": item_id, "type": "error_pattern",
+            "content": "de hond", "answer": "de hond",
+            "category": "grammar", "difficulty": "",
+            "created_date": "2026-04-20", "due_date": "2026-05-10",
+            "interval_days": 6, "repetitions": 2, "easiness_factor": 2.5,
+            "consecutive_correct": 2, "consecutive_incorrect": 0,
+            "last_reviewed": "2026-04-18", "last_quality": 4,
+            "mastery_level": 3, "total_reviews": 4, "priority": "medium",
+            "review_history": [],
+        }
+        item.update(over)
+        return item
+
+    def _add_sr_item(self, item):
+        path = self.tmp / "data" / "spaced-repetition.json"
+        sr = json.loads(path.read_text())
+        sr["items"][item["id"]] = item
+        path.write_text(json.dumps(sr))
+
+    def _session(self, session_id="session-400", **over):
+        payload = {"session_id": session_id, "date": "2026-04-24"}
+        payload.update(over)
+        return payload
+
+    def _sr(self):
+        return self._load("spaced-repetition.json")
+
+    def test_recurring_error_reschedules_existing_sr_item(self):
+        """An errors[] entry whose pattern_id already exists in sr.items must
+        lapse the item (reschedule to tomorrow), not leave its old due_date."""
+        self._add_sr_item(self._error_pattern_item())
+        proc = self._run(self._session(errors=[{
+            "pattern_id": "err_articles", "category": "grammar",
+            "your_answer": "het hond", "correct_answer": "de hond",
+        }]))
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        item = self._sr()["items"]["err_articles"]
+        self.assertEqual(item["due_date"], "2026-04-25")
+        self.assertEqual(item["repetitions"], 0)
+        self.assertEqual(item["interval_days"], 1)
+        self.assertEqual(item["mastery_level"], 2)
+        self.assertEqual(item["consecutive_incorrect"], 1)
+        self.assertEqual(item["consecutive_correct"], 0)
+        self.assertEqual(item["total_reviews"], 5)
+        self.assertEqual(item["last_quality"], 2)
+        self.assertIn("err_articles",
+                      self._sr()["review_queue"]["tomorrow"])
+
+    def test_error_plus_review_result_applies_sm2_once(self):
+        """An item in both review_results and errors uses the explicit quality;
+        SM-2 runs once, mistakes-db frequency still bumps."""
+        self._add_sr_item(self._error_pattern_item())
+        mistakes = self._load("mistakes-db.json")
+        mistakes["error_patterns"]["err_articles"] = {
+            "category": "grammar", "mastery_level": 3, "frequency": 1,
+            "consecutive_incorrect": 0, "consecutive_correct": 2,
+            "examples": [],
+        }
+        (self.tmp / "data" / "mistakes-db.json").write_text(json.dumps(mistakes))
+
+        proc = self._run(self._session(
+            review_results=[{"item_id": "err_articles", "quality": 4}],
+            errors=[{"pattern_id": "err_articles", "category": "grammar",
+                     "your_answer": "het hond", "correct_answer": "de hond"}],
+        ))
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        item = self._sr()["items"]["err_articles"]
+        self.assertEqual(item["total_reviews"], 5)  # +1 only
+        self.assertEqual(item["last_quality"], 4)
+        self.assertGreaterEqual(item["mastery_level"], 3)  # not decremented
+        self.assertGreater(item["interval_days"], 6)  # interval grew
+        self.assertEqual(len(item["review_history"]), 1)
+        pat = self._load("mistakes-db.json")["error_patterns"]["err_articles"]
+        self.assertEqual(pat["frequency"], 2)
+
+    def test_low_quality_review_decrements_mastery(self):
+        self._add_sr_item(self._error_pattern_item())
+        proc = self._run(self._session(
+            review_results=[{"item_id": "err_articles", "quality": 1}]))
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertEqual(self._sr()["items"]["err_articles"]["mastery_level"], 2)
+
+    def test_duplicate_review_results_count_once(self):
+        """Duplicate review_results entries for one item: last entry wins,
+        SM-2 applied once."""
+        proc = self._run(self._session(review_results=[
+            {"item_id": "vocab_dag", "quality": 5},
+            {"item_id": "vocab_dag", "quality": 1},
+        ]))
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        item = self._sr()["items"]["vocab_dag"]
+        self.assertEqual(item["total_reviews"], 2)  # was 1, +1 not +2
+        self.assertEqual(item["last_quality"], 1)  # last entry wins
+        self.assertEqual(len(item["review_history"]), 1)
+        self.assertEqual(item["review_history"][0]["quality"], 1)
+
+    def test_recurring_error_decrements_mistakes_mastery(self):
+        mistakes = self._load("mistakes-db.json")
+        mistakes["error_patterns"]["verb_spreek"] = {
+            "category": "grammar", "mastery_level": 3, "frequency": 1,
+            "consecutive_incorrect": 0, "consecutive_correct": 2,
+            "examples": [],
+        }
+        (self.tmp / "data" / "mistakes-db.json").write_text(json.dumps(mistakes))
+        proc = self._run(self._session(errors=[{
+            "pattern_id": "verb_spreek", "category": "grammar",
+            "your_answer": "Hij spreek", "correct_answer": "Hij spreekt",
+        }]))
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        pat = self._load("mistakes-db.json")["error_patterns"]["verb_spreek"]
+        self.assertEqual(pat["mastery_level"], 2)
+
+    def test_same_day_zero_streak_becomes_one(self):
+        """A profile created today (streak 0) gets streak 1 on its first
+        session of the same day."""
+        profile = self._load("learner-profile.json")
+        profile["last_updated"] = "2026-04-24"
+        profile["current_streak_days"] = 0
+        (self.tmp / "data" / "learner-profile.json").write_text(json.dumps(profile))
+        proc = self._run(self._session())
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertEqual(self._load("learner-profile.json")
+                         ["current_streak_days"], 1)
+
+
+class ReadDbDueItemsTest(unittest.TestCase):
+    """read-db.py computes due_review_items from the real clock."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="fluent-test-read-"))
+        (self.tmp / "data").mkdir()
+        make_fixtures(self.tmp / "data")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_due_items_fresh_and_sorted(self):
+        """Items with due_date <= today must appear even when the stored
+        review_queue.today is empty, ordered by priority then due_date."""
+        from datetime import datetime, timedelta
+        today = datetime.now().strftime("%Y-%m-%d")
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        def item(item_id, priority, due):
+            return {
+                "id": item_id, "type": "vocabulary", "content": item_id,
+                "answer": "", "category": "", "difficulty": "",
+                "created_date": yesterday, "due_date": due,
+                "interval_days": 1, "repetitions": 1, "easiness_factor": 2.5,
+                "consecutive_correct": 1, "consecutive_incorrect": 0,
+                "last_reviewed": yesterday, "last_quality": 4,
+                "mastery_level": 1, "total_reviews": 1, "priority": priority,
+            }
+
+        sr = {
+            "metadata": {"algorithm": "SM-2", "last_updated": yesterday,
+                         "total_items_tracked": 3, "language": "Dutch"},
+            "review_queue": {"today": [], "tomorrow": [],
+                             "this_week": [], "later": []},
+            "items": {
+                "low_early": item("low_early", "low", yesterday),
+                "crit_late": item("crit_late", "critical", today),
+                "high_early": item("high_early", "high", yesterday),
+            },
+        }
+        (self.tmp / "data" / "spaced-repetition.json").write_text(json.dumps(sr))
+
+        env = dict(os.environ, FLUENT_DATA_DIR=str(self.tmp / "data"))
+        proc = subprocess.run(
+            [sys.executable, str(READ_SCRIPT)],
+            cwd=str(self.tmp), capture_output=True, env=env,
+        )
+        self.assertEqual(proc.returncode, 0,
+                         msg=f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
+        out = json.loads(proc.stdout.decode())
+        self.assertEqual(out["computed"]["due_review_items"],
+                         ["crit_late", "high_early", "low_early"])
+        self.assertEqual(out["computed"]["due_reviews_count"], 3)
 
 
 if __name__ == "__main__":

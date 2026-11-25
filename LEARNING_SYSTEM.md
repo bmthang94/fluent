@@ -106,10 +106,9 @@ Ready? Let's make today count!"
 
 ### Step 3: Check Review Queue
 
-From `spaced-repetition.json`:
-- Load `review_queue.today` items
-- Prioritize by `priority` field (critical > high > medium > low)
-- Limit to `daily_limits.review_items_per_day` (default: 20)
+From the `read-db.py` output:
+- Load `computed.due_review_items` (already sorted by priority, then due_date) — never `review_queue.today`, which goes stale between `update-db.py` runs
+- Limit to `spaced-repetition.daily_limits.review_items_per_day` (default: 20)
 
 ### Step 4: Generate Session Plan
 
@@ -530,8 +529,8 @@ Show progress in fun ways:
 ### `/dutch-review` - Spaced Repetition Review
 
 **Flow:**
-1. Load spaced-repetition.json → review_queue.today
-2. Sort by priority (critical first)
+1. Run read-db.py → `computed.due_review_items` (sorted by priority, critical first)
+2. Join with spaced-repetition `items` for content
 3. Limit to daily_limits.review_items_per_day
 4. For each item:
    - Generate targeted exercise

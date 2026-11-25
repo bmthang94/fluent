@@ -67,7 +67,11 @@ def main():
 
     sr = databases.get("spaced_repetition", {})
     items = sr.get("items", {})
-    due_items = [iid for iid, item in items.items() if item.get("due_date", "") <= today]
+    priority_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    due_items = sorted(
+        (iid for iid, item in items.items() if item.get("due_date", "") <= today),
+        key=lambda iid: (priority_rank.get(items[iid].get("priority"), len(priority_rank)),
+                         items[iid].get("due_date", ""), iid))
 
     log = databases.get("session_log", {})
     sessions = log.get("sessions", [])

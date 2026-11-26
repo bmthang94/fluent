@@ -154,3 +154,45 @@ Everything else is optional; omitted fields do not update.
   whose `milestone` is missing/empty/non-string, is a validation error (exit
   `1`, no files written). A present-but-unparseable `date` silently falls back
   to the session date.
+
+
+## read-chat-history.py
+
+`python3 .claude/hooks/read-chat-history.py` is a read-only local reader that
+extracts, for one local day in the fixed `+07:00` timezone, the chat turns the
+machine owner personally wrote to supported coding agents. It scans Codex,
+Antigravity, Devin, Claude Code and Grok transcript stores; provider databases
+are opened read-only and no byte cursors or provider files are written.
+
+```bash
+# Counts only — never prints turn text
+python3 .claude/hooks/read-chat-history.py --date 2026-11-25 --format summary
+
+# JSON owner-turn extraction (contains turn text; handle as private data)
+python3 .claude/hooks/read-chat-history.py --date 2026-11-25 --format json
+
+# Restrict providers or override the home directory (useful for tests)
+python3 .claude/hooks/read-chat-history.py --date 2026-11-25 \
+  --sources codex,claude --home /path/to/synthetic-home --no-orca
+
+# Calibration sample export and scoring
+python3 .claude/hooks/read-chat-history.py --calibration-export --days 7 --sample 40
+python3 .claude/hooks/read-chat-history.py --calibration-score data/chat-review/calibration-YYYYMMDD.jsonl
+# Re-run the current filter on a labeled file (exit 1 if any leak)
+python3 .claude/hooks/read-chat-history.py --calibration-recheck data/chat-review/calibration-YYYYMMDD.jsonl
+```
+
+Provenance is decided in layers: provider markers, then Orca's chat journal
+(`~/Library/Application Support/orca/agent-session-domain.db`, opened
+read-only; override with `--orca-db PATH`), which records whether each message
+in an Orca-hosted chat came from the owner, an agent or Orca itself; then
+agent-sent text found in other sessions' tool-call inputs; then known Orca and
+automation patterns. Turns of uncertain origin are counted, never returned.
+
+By default the reader cross-checks prompts from `orca automations list --json`
+to recognize automated launches. Use `--automation-prompts FILE` (a JSON list of
+prompt strings) to supply those prompts explicitly, or `--no-orca` to skip the
+cross-check. Calibration exports are private data and are written to
+`<data_dir>/chat-review/calibration-YYYYMMDD.jsonl`; that directory is ignored
+by git. `--calibration-score` prints only aggregate leak/miss statistics and
+exits `1` if any predicted-owner row was labeled `not`.

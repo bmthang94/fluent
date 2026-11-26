@@ -77,6 +77,7 @@ Generate an exercise matched to `item_type`:
 
 - **error_pattern**: load the pattern from `mistakes-db`, create a scenario that forces the correct form. E.g. `formal_informal_confusion` → ask the learner to complete a formal email opening.
 - **vocabulary**: recognition (target → native), production (native → target), or cloze — rotate modes.
+- **vocabulary with `category: chat_expression`** (an expression approved from the learner's own coding-agent chats): never use translation or cloze. Show `content` (a short English work situation) and ask what the learner would say or write. Keep `answer` and its distinctive phrase out of the exercise, title and labels. Accept any natural wording that conveys the same intent and fits the audience; after the learner answers, show `answer` as the model response and briefly explain useful differences.
 - **grammar_rule**: a fill-in or error-correction exercise that tests the rule.
 
 Present one at a time:

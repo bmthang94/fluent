@@ -22,11 +22,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fluent_paths import ensure_data_dir, ensure_backups_dir, force_utf8_io  # noqa: E402
+from fluent_paths import data_dir, backups_dir, force_utf8_io, db_lock  # noqa: E402
 
 force_utf8_io()
-DATA_DIR = ensure_data_dir()
-BACKUP_DIR = ensure_backups_dir()
+DATA_DIR = data_dir()
+BACKUP_DIR = backups_dir()
 
 # --- Utility functions ---
 
@@ -201,6 +201,18 @@ def load_pre_session_state(sid: str, logged_ids: list, files: dict) -> dict:
         raise ValueError(
             f"session {sid} is already recorded and its pre-update backup already "
             f"contains it, so it cannot be replaced. Use a new session_id.")
+
+    for key, label in (("sr", "spaced-repetition.json"), ("mistakes", "mistakes-db.json")):
+        try:
+            current_db = load_json(files[key])
+        except Exception:
+            current_db = {}
+        current_imports = set(current_db.get("metadata", {}).get("chat_imports", []))
+        backup_imports = set(state[key].get("metadata", {}).get("chat_imports", []))
+        if current_imports - backup_imports:
+            raise ValueError(
+                f"session {sid} is already recorded but a chat review was imported "
+                f"after this session ({label}); use a new session_id")
     return state
 
 
@@ -616,38 +628,9 @@ def update_session_log(log: dict, session: dict, streak: int):
     log.setdefault("metadata", {})["total_sessions"] = len(log["sessions"])
 
 
-# --- Main ---
 
-def main():
-    try:
-        if len(sys.argv) > 1:
-            session = json.loads(sys.argv[1])
-        else:
-            session = json.load(sys.stdin)
-    except json.JSONDecodeError as e:
-        print(f"[Fluent] Error: Invalid JSON input: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    for field in ("session_id", "date"):
-        if field not in session:
-            print(f"[Fluent] Error: Missing required field '{field}'", file=sys.stderr)
-            sys.exit(1)
-
-    # Validate + canonicalize milestones before touching any DB (exits 1 on
-    # malformed input, so disk stays untouched on a validation failure).
-    normalize_milestones(session)
-
-    session.setdefault("duration_minutes", 0)
-
-    files = {
-        "profile": DATA_DIR / "learner-profile.json",
-        "progress": DATA_DIR / "progress-db.json",
-        "mistakes": DATA_DIR / "mistakes-db.json",
-        "mastery": DATA_DIR / "mastery-db.json",
-        "sr": DATA_DIR / "spaced-repetition.json",
-        "log": DATA_DIR / "session-log.json",
-    }
-
+def apply_session_update(session: dict, files: dict):
+    """Apply a validated session while the caller holds db_lock."""
     try:
         originals = {k: load_json(p) for k, p in files.items()}
     except Exception as e:
@@ -690,6 +673,48 @@ def main():
         save_all(files, data)
     except Exception as e:
         print(f"[Fluent] Error saving databases: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    return data, replacing, streak
+
+
+# --- Main ---
+
+def main():
+    try:
+        if len(sys.argv) > 1:
+            session = json.loads(sys.argv[1])
+        else:
+            session = json.load(sys.stdin)
+    except json.JSONDecodeError as e:
+        print(f"[Fluent] Error: Invalid JSON input: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    for field in ("session_id", "date"):
+        if field not in session:
+            print(f"[Fluent] Error: Missing required field '{field}'", file=sys.stderr)
+            sys.exit(1)
+
+    # Validate + canonicalize milestones before touching any DB (exits 1 on
+    # malformed input, so disk stays untouched on a validation failure).
+    normalize_milestones(session)
+
+    session.setdefault("duration_minutes", 0)
+
+    files = {
+        "profile": DATA_DIR / "learner-profile.json",
+        "progress": DATA_DIR / "progress-db.json",
+        "mistakes": DATA_DIR / "mistakes-db.json",
+        "mastery": DATA_DIR / "mastery-db.json",
+        "sr": DATA_DIR / "spaced-repetition.json",
+        "log": DATA_DIR / "session-log.json",
+    }
+
+    try:
+        with db_lock():
+            data, replacing, streak = apply_session_update(session, files)
+    except TimeoutError as e:
+        print(f"[Fluent] Error: {e}", file=sys.stderr)
         sys.exit(2)
 
     # Summary

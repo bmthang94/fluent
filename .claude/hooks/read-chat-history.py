@@ -408,7 +408,7 @@ def read_devin(home, start, end):
             provenance = "automated"
             reason = "shell_command"
         else:
-            raw = re.sub(r"^/[\w:.-]+\s*", "", raw)
+            raw = re.sub(r"^[/\$][\w:.-]+\s*", "", raw)
         turns.append({
             "source": "devin", "session_id": str(sid or ""), "turn_id": ident,
             "dt": dt, "cwd": cwd_by_session.get(str(sid), ""),
@@ -996,7 +996,7 @@ def load_orca_journal(db_path, start, end):
 def journal_normalized_candidate(raw):
     without_context, _ = strip_orca_context_blocks(raw)
     candidate, _, _ = strip_orca_envelope_and_prefixes(without_context)
-    candidate = re.sub(r"^/[\w:.-]+\s*", "", candidate.lstrip())
+    candidate = re.sub(r"^[/\$][\w:.-]+\s*", "", candidate.lstrip())
     return normalize_machine_text(candidate)
 
 
@@ -1141,12 +1141,12 @@ def classify_and_clean(candidates, coverage_by_source, automation_prompts, sent_
             provenance = submission["provenance"]
             reason = submission["reason"]
             raw = original_raw.lstrip()
-            raw = re.sub(r"^/[\w:.-]+\s*", "", raw)
+            raw = re.sub(r"^[/\$][\w:.-]+\s*", "", raw)
         else:
             transcript_replay = is_orca_transcript_replay(original_raw)
             raw, orca_context_count = strip_orca_context_blocks(original_raw)
             raw, orca_envelope_count, unclosed_orca_envelope = strip_orca_envelope_and_prefixes(raw)
-            raw = re.sub(r"^/[\w:.-]+\s*", "", raw.lstrip())
+            raw = re.sub(r"^[/\$][\w:.-]+\s*", "", raw.lstrip())
             provenance = "owner" if owner_submission else turn["provenance"]
             reason = submission["reason"] if owner_submission else turn["reason"]
             if transcript_replay:

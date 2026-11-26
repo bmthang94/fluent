@@ -38,7 +38,7 @@ If any are missing, direct the learner to `/fluent-setup` and stop.
 
 Priority order:
 
-1. Items in `computed.due_review_items` (from `read-db.py`) whose `items` entry has `type == "vocabulary"`. Never use `review_queue.today` — it goes stale between `update-db.py` runs.
+1. Items in `computed.due_review_items` (from `read-db.py`) whose `items` entry has `type == "vocabulary"` and whose `category` is not `chat_expression` (those are situation cards reviewed only in `/fluent-review`). Never use `review_queue.today` — it goes stale between `update-db.py` runs.
 2. Words from `mistakes-db.json` where `category == "vocabulary"` and `mastery_level <= 2`.
 3. New high-frequency words matching `learner-profile.focus_areas`.
 

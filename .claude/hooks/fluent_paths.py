@@ -23,8 +23,15 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None
 
 
 PROJECT_DIR_VARS = ("CLAUDE_PROJECT_DIR", "DEVIN_PROJECT_DIR")
@@ -96,6 +103,47 @@ def data_dir() -> Path:
         return repo_data
 
     return (Path.home() / ".claude" / "fluent-data").resolve()
+
+
+@contextmanager
+def db_lock(timeout=None):
+    """Hold the exclusive Fluent database lock.
+
+    Callers that mutate multiple database files must use this lock. The lock is
+    a no-op on platforms without fcntl. Timeout defaults to
+    FLUENT_DB_LOCK_TIMEOUT seconds, then 30.
+    """
+    if fcntl is None:
+        yield
+        return
+    if timeout is None:
+        try:
+            timeout = float(os.environ.get("FLUENT_DB_LOCK_TIMEOUT", "30"))
+        except ValueError:
+            timeout = 30.0
+    root = ensure_data_dir()
+    path = root / ".fluent-db.lock"
+    handle = open(str(path), "a+", encoding="utf-8")
+    deadline = time.monotonic() + float(timeout)
+    locked = False
+    try:
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("timed out waiting for Fluent database lock")
+                time.sleep(0.05)
+        yield
+    finally:
+        if locked:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+        handle.close()
 
 
 def ensure_data_dir() -> Path:

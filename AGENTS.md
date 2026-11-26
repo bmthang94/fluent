@@ -65,9 +65,10 @@ When the learner uses these commands, follow their specific flows:
 - **/fluent-reading** - Reading comprehension
 - **/fluent-progress** - Show statistics, visualize progress
 - **/fluent-review** - Today's spaced repetition reviews
+- **/fluent-chat-review** - Approve the nightly review of your own coding-agent chats (English errors and suggested expressions)
 - **/fluent-setup** - Interactive onboarding for new learners
 
-Each command is a skill: a folder at `.claude/skills/<name>/SKILL.md` holding the full flow for that command. Learner-facing skills (`fluent-setup`, `fluent-learn`, `fluent-vocab`, `fluent-writing`, `fluent-speaking`, `fluent-reading`, `fluent-review`) start **only when the learner asks for them by name** — never start a practice session from an ambiguous message, because a session writes to all 6 databases. `fluent-progress` may be opened whenever the learner asks about their stats. Helper skills (`fluent-sm2-calculator`, `fluent-feedback-formatter`, `fluent-db-updater`, `fluent-session-analyzer`) are references you load yourself whenever you need them during a session.
+Each command is a skill: a folder at `.claude/skills/<name>/SKILL.md` holding the full flow for that command. Learner-facing skills (`fluent-setup`, `fluent-learn`, `fluent-vocab`, `fluent-writing`, `fluent-speaking`, `fluent-reading`, `fluent-review`) start **only when the learner asks for them by name** — never start a practice session from an ambiguous message, because a session writes to all 6 databases. `fluent-progress` may be opened whenever the learner asks about their stats. `fluent-chat-review` saves only what the learner explicitly approves from a digest. Helper skills (`fluent-sm2-calculator`, `fluent-feedback-formatter`, `fluent-db-updater`, `fluent-session-analyzer`) are references you load yourself whenever you need them during a session.
 
 ## Running Fluent in Your Agent
 

@@ -156,6 +156,41 @@ Everything else is optional; omitted fields do not update.
   to the session date.
 
 
+## daily-chat-review.py
+
+`python3 .claude/hooks/daily-chat-review.py` prepares owner chat text for review,
+ingests the analyzer's `analysis.json`, records digest approval decisions, and
+imports approved digest rows into the learning databases.
+
+```bash
+python3 .claude/hooks/daily-chat-review.py prepare
+python3 .claude/hooks/daily-chat-review.py ingest <analysis.json>
+python3 .claude/hooks/daily-chat-review.py approve --digest YYYY-MM-DD --all
+python3 .claude/hooks/daily-chat-review.py import --digest YYYY-MM-DD
+python3 .claude/hooks/daily-chat-review.py digest show [YYYY-MM-DD]
+python3 .claude/hooks/daily-chat-review.py status
+```
+
+Chat-review state lives under `<data_dir>/chat-review/` (`state.json`,
+`cache.json`, `intents.json`, per-run packages, and digests). `prepare`,
+`ingest` and `approve` serialize that state with the chat-review `.lock`.
+Importing additionally takes the shared database lock `.fluent-db.lock`; the
+lock order is always chat-review lock first, then database lock, matching
+`update-db.py`'s use of the database lock alone.
+
+Approval imports immediately, and `import --digest` can retry or re-run an
+import. Import writes only `mistakes-db.json` and `spaced-repetition.json`:
+selected English error groups become one error-pattern update per digest, and
+selected expression rows become `chat_expression` vocabulary cards. It backs up
+those two files to `.backups/pre-chat-import-<digest_id>` before writing,
+uses the same two-phase `save_all` write as `update-db.py`, and records each
+imported digest in both files' `metadata.chat_imports` for idempotency.
+Repeating an import does not increment frequencies or duplicate cards; if the
+digest id is present in only one database, the import stops without writes.
+It never modifies `learner-profile.json`, `progress-db.json`,
+`mastery-db.json`, or `session-log.json`.
+
+
 ## read-chat-history.py
 
 `python3 .claude/hooks/read-chat-history.py` is a read-only local reader that

@@ -732,6 +732,8 @@ class ChatHistoryTest(unittest.TestCase):
             {"type": "session_meta", "payload": {"id": "slash-codex", "source": "cli"}},
             {"type": "response_item", "timestamp": iso_local(DAY, 10), "payload": {"type": "message", "role": "user", "content": [
                 {"type": "input_text", "text": "/codex-task do codex"}]}},
+            {"type": "response_item", "timestamp": iso_local(DAY, 10, 1), "payload": {"type": "message", "role": "user", "content": [
+                {"type": "input_text", "text": "$codex-task do dollar"}]}},
         ])
         touch_in_window(codex)
         anti = self.home / ".gemini" / "antigravity-cli" / "brain" / "slash-ag" / ".system_generated" / "logs" / "transcript_full.jsonl"
@@ -749,6 +751,7 @@ class ChatHistoryTest(unittest.TestCase):
         payload = self.run_json(extra=("--sources", "codex,antigravity,claude,grok"))
         texts = {(t["source"], t["text"]) for t in payload["turns"]}
         self.assertIn(("codex", "do codex"), texts)
+        self.assertIn(("codex", "do dollar"), texts)
         self.assertIn(("antigravity", "do anti"), texts)
         self.assertIn(("claude", "do claude"), texts)
         self.assertIn(("grok", "do grok"), texts)

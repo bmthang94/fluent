@@ -185,12 +185,12 @@ This system implements proven learning science:
 
 ## 🎮 Available Commands & Skills
 
-Fluent is built as **Claude Code skills** — 12 of them. Skills work two ways:
+Fluent is built as **Claude Code skills** — 13 of them. Skills work two ways:
 
 1. **Type the slash command** (`/fluent-learn`, `/fluent-vocab`, etc.) — you explicitly start a session. Learner-facing skills are gated so they only run this way. No accidental 20-minute session triggered by a chat message.
 2. **Ask naturally** — read-only skills like `/fluent-progress` auto-trigger when you ask "how am I doing?" or "what's my streak?". Helper skills (SM-2 math, feedback formatter, DB updater, session analyzer) auto-load whenever Claude needs them during a session.
 
-All 12 skills appear in your `/` menu so you can always invoke any of them manually.
+All 13 skills appear in your `/` menu so you can always invoke any of them manually.
 
 ### Learner-facing commands
 
@@ -229,6 +229,7 @@ These skills don't change what the learner-facing commands do — they let Claud
 | **`/fluent-feedback-formatter`** | Canonical per-answer feedback template — severity tagging (🔴 critical / 🟡 moderate / 🟢 minor), category labels, tone rules. | Auto-loaded every time Claude grades an answer. |
 | **`/fluent-db-updater`** | How to call `update-db.py` with a single JSON payload that atomically updates all 6 databases at session end. | Auto-loaded when a session ends. |
 | **`/fluent-session-analyzer`** | Parses `/results/fluent-{skill}-session-{ID}.md` files to extract error patterns, strengths, and focus areas for the next session. | Auto-loaded when planning the next session. |
+| **`/fluent-chat-review`** | Reviews owner chat history for recurring English mistakes and useful expression intents, then imports approved digest items into the learning databases. | Runs through the chat-review automation and approval flow. |
 
 ### 📅 Recommended Daily Routine
 
@@ -284,7 +285,7 @@ The AI follows these guides:
 
 ### Interface Layer
 
-- **Skills** (`.claude/skills/`) — 12 skills total. 8 learner-facing (`/fluent-setup`, `/fluent-learn`, `/fluent-vocab`, `/fluent-writing`, `/fluent-speaking`, `/fluent-reading`, `/fluent-review`, `/fluent-progress`) run when you invoke them. 4 helper skills (`/fluent-sm2-calculator`, `/fluent-feedback-formatter`, `/fluent-db-updater`, `/fluent-session-analyzer`) auto-load whenever Claude needs them during a session — and are also directly `/`-invokable if you want to read the reference.
+- **Skills** (`.claude/skills/`) — 13 skills total. 8 learner-facing (`/fluent-setup`, `/fluent-learn`, `/fluent-vocab`, `/fluent-writing`, `/fluent-speaking`, `/fluent-reading`, `/fluent-review`, `/fluent-progress`) run when you invoke them. 5 helper skills (`/fluent-sm2-calculator`, `/fluent-feedback-formatter`, `/fluent-db-updater`, `/fluent-session-analyzer`, `/fluent-chat-review`) auto-load whenever Claude needs them during a session — and are also directly `/`-invokable if you want to read the reference.
 - **Plugin manifests** (`.claude-plugin/`) — `plugin.json` + `marketplace.json` make Fluent installable via `/plugin marketplace add m98/fluent`.
 - **Automatic Hooks** (`.claude/hooks/`) — SessionStart welcome, SessionEnd backups, PostToolUse JSON validation + backups, PreCompact safety backup. Both `hooks.json` (plugin mode) and `.claude/settings.json` (clone mode) wire them up.
 - **Other agents** — the same hook scripts run under Codex (`.codex/hooks.json`, trust once via `/hooks`), Devin (imports `.claude/settings.json`, plus `.devin/hooks.v1.json`) and Antigravity CLI (`.agents/hooks.json`). The skills are exposed to them through symlinks in `.agents/skills/`. See `.claude/hooks/README.md`.
@@ -340,7 +341,7 @@ The system automatically adjusts:
 - **Platform:** Claude Code (Anthropic), installable as a plugin or by clone
 - **AI Model:** Claude (any Claude Code-supported model)
 - **Data Format:** JSON (human-readable)
-- **Skills:** Markdown `SKILL.md` files with YAML frontmatter (12 total — 8 learner-facing + 4 helper)
+- **Skills:** Markdown `SKILL.md` files with YAML frontmatter (13 total — 8 learner-facing + 5 helper)
 - **Hooks:** Python + Bash, triggered on SessionStart / SessionEnd / PostToolUse / PreCompact
 - **Algorithm:** SM-2 (SuperMemo 2)
 - **Version Control:** Git
@@ -445,7 +446,7 @@ It helps others discover this project and motivates us to keep improving it!
 
 ## 📈 Project Stats
 
-- **Skills:** 12 (8 learner-facing + 4 helper)
+- **Skills:** 13 (8 learner-facing + 5 helper)
 - **Hooks:** 5 automated (SessionStart, SessionEnd, PostToolUse, PreCompact, DB helpers)
 - **Databases:** 6 JSON tracking files
 - **Install paths:** 2 (Claude Code plugin + git clone — both supported)

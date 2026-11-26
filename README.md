@@ -287,6 +287,7 @@ The AI follows these guides:
 - **Skills** (`.claude/skills/`) — 12 skills total. 8 learner-facing (`/fluent-setup`, `/fluent-learn`, `/fluent-vocab`, `/fluent-writing`, `/fluent-speaking`, `/fluent-reading`, `/fluent-review`, `/fluent-progress`) run when you invoke them. 4 helper skills (`/fluent-sm2-calculator`, `/fluent-feedback-formatter`, `/fluent-db-updater`, `/fluent-session-analyzer`) auto-load whenever Claude needs them during a session — and are also directly `/`-invokable if you want to read the reference.
 - **Plugin manifests** (`.claude-plugin/`) — `plugin.json` + `marketplace.json` make Fluent installable via `/plugin marketplace add m98/fluent`.
 - **Automatic Hooks** (`.claude/hooks/`) — SessionStart welcome, SessionEnd backups, PostToolUse JSON validation + backups, PreCompact safety backup. Both `hooks.json` (plugin mode) and `.claude/settings.json` (clone mode) wire them up.
+- **Other agents** — the same hook scripts run under Codex (`.codex/hooks.json`, trust once via `/hooks`), Devin (imports `.claude/settings.json`, plus `.devin/hooks.v1.json`) and Antigravity CLI (`.agents/hooks.json`). The skills are exposed to them through symlinks in `.agents/skills/`. See `.claude/hooks/README.md`.
 - **Session Results** (`/results/`) — Detailed practice logs per session, parsed by `fluent-session-analyzer` to plan future sessions.
 
 ---

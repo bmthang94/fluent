@@ -1072,9 +1072,11 @@ def render_digest(digest, intents=None):
     if digest.get("english"):
         for group in digest["english"]:
             example = group.get("examples", [{}])[0]
-            lines.append('%s. "%s" → "%s" — %s (%d lần)' % (
+            count = group.get("count", 0)
+            suffix = " (%d lỗi cùng dạng)" % count if count > 1 else ""
+            lines.append('%s. "%s" → "%s" — %s%s' % (
                 group.get("key", ""), example.get("quote", ""), example.get("correction", ""),
-                example.get("explanation_vi", ""), group.get("count", 0),
+                example.get("explanation_vi", ""), suffix,
             ))
     else:
         lines.append("Không có lỗi mới.")

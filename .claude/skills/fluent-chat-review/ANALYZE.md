@@ -69,6 +69,9 @@ English errors
 - Report only real errors or clearly unnatural wording a B2 reader would
   notice. Ignore code, identifiers, file names, commands, product names, and
   deliberate shorthand such as "pls" or "commit push".
+- Ignore capitalization-only slips (such as "i" or "c1") and one-off typos
+  with swapped or missing letters; this is fast chat typing. Report a
+  misspelling only when it looks like the learner does not know the word.
 - `quote` must be copied exactly from the item text. Keep it short.
 - If the item is actually Vietnamese typed without diacritics, or not prose,
   put it in `skipped` with reason `not English prose`.

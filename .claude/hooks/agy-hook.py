@@ -30,7 +30,7 @@ from fluent_paths import force_utf8_io  # noqa: E402
 
 force_utf8_io()
 
-EDIT_TOOLS = {"write_to_file", "replace_file_content", "multi_replace_file_content"}
+EDIT_TOOLS = {"write_file", "edit_file", "write_to_file", "replace_file_content", "multi_replace_file_content"}
 
 
 def load_guard():
@@ -107,7 +107,8 @@ def main():
 
     elif event == "PostToolUse":
         call = payload.get("toolCall") or {}
-        target = (call.get("args") or {}).get("TargetFile")
+        args = call.get("args") or {}
+        target = args.get("Path") or args.get("TargetFile")
         if call.get("name") in EDIT_TOOLS and target and not payload.get("error"):
             result = run_script("validate-data.py", {"tool_input": {"file_path": target}})
             warning = side_file(guard, conversation, ".warn")

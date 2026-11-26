@@ -418,6 +418,11 @@ def prepare(args):
         now = parse_iso(args.now) if args.now else datetime.now(LOCAL_TZ)
         if now is None:
             raise ReviewError("invalid --now ISO timestamp")
+        if not args.dry_run:
+            auto_notes = auto_approve_due(base, now)
+            if auto_notes:
+                state["pending_auto_saved_notes"] = auto_notes
+                save_state(base, state)
         start, end, capped = resolve_window(state, now)
         home = Path(args.home).expanduser() if args.home else Path.home()
         turns, coverage = collect_owner_turns(args, start, end, home)
@@ -925,6 +930,85 @@ def digest_expressions(base, intents):
     return rows
 
 
+def auto_time_text(value):
+    dt = parse_iso(value)
+    if dt is None:
+        return ""
+    return dt.astimezone(LOCAL_TZ).strftime("%H:%M %d/%m")
+
+
+def auto_footer(auto_approve_at):
+    return 'Tự lưu lúc %s trừ mục anh trả lời "bỏ …". Trả lời "duyệt hết" để lưu ngay.' % auto_time_text(auto_approve_at)
+
+
+def digest_all_keys(digest):
+    return sorted(available_keys(digest))
+
+
+def apply_digest_intent_decision(base, digest, selected, rejected, decided_at):
+    intents = load_intents(base)
+    for row in digest.get("expressions", []):
+        intent = intents.get(row.get("intent_id"))
+        if not intent:
+            continue
+        if row.get("key") in selected:
+            intent["status"] = "approved"
+            intent["card_id"] = "chat_expr_" + row["intent_id"]
+        elif row.get("key") in rejected:
+            intent["status"] = "pending"
+            intent["counting_since"] = decided_at
+        intent["updated_run"] = digest.get("run_id")
+    save_intents(base, intents)
+
+
+def enable_auto_approve(base, selected):
+    if not selected:
+        return
+    state = load_state(base)
+    if not state.get("auto_approve_enabled_at"):
+        state["auto_approve_enabled_at"] = minute_dt(datetime.now(LOCAL_TZ)).isoformat()
+        save_state(base, state)
+
+
+def auto_approve_due(base, now):
+    notes = []
+    digest_dir = base / "digests"
+    if not digest_dir.exists():
+        return notes
+    for path in sorted(digest_dir.glob("*.json")):
+        digest = read_json(path, {})
+        if digest.get("status") != "awaiting_approval" or not digest.get("auto_approve_at"):
+            continue
+        auto_at = parse_iso(digest.get("auto_approve_at"))
+        # The next nightly run may start a little early; allow one hour of slack.
+        if auto_at is None or auto_at - timedelta(hours=1) > now:
+            continue
+        digest_id = digest.get("digest_id", path.stem)
+        old_decision = digest.get("decision") or {}
+        rejected = set(old_decision.get("rejected", []))
+        selected = set(digest_all_keys(digest)) - rejected
+        decided_at = minute_dt(now).isoformat()
+        digest["decision"] = {
+            "selected": sorted(selected),
+            "rejected": sorted(rejected),
+            "decided_at": decided_at,
+            "auto": True,
+        }
+        digest["status"] = "approved"
+        apply_digest_intent_decision(base, digest, selected, rejected, decided_at)
+        atomic_write_json(path, digest)
+        try:
+            perform_import(digest_id)
+            imported = read_json(path, {})
+            summary = imported.get("import_summary", {})
+            cards = summary.get("new_cards", 0) + summary.get("existing_cards", 0)
+            notes.append("Đã tự lưu bản %s: %d lỗi tiếng Anh, %d thẻ cách diễn đạt." % (
+                digest_id, summary.get("errors", 0), cards))
+        except Exception as exc:
+            notes.append("Chưa lưu được bản %s: %s" % (digest_id, exc))
+    return notes
+
+
 def finalize_run(base, run_dir, package, analysis):
     intents = load_intents(base)
     end = parse_iso(package["window"]["end"])
@@ -933,6 +1017,7 @@ def finalize_run(base, run_dir, package, analysis):
     write_analysis_cache(base, cache, package, analysis, intents)
     save_intents(base, intents)
 
+    state = load_state(base)
     digest_id = digest_id_for(end, base)
     digest = {
         "digest_id": digest_id,
@@ -945,9 +1030,13 @@ def finalize_run(base, run_dir, package, analysis):
         "status": "awaiting_approval",
         "decision": None,
     }
+    if state.get("auto_approve_enabled_at"):
+        digest["auto_approve_at"] = minute_dt(end + timedelta(hours=24)).isoformat()
+    auto_notes = state.pop("pending_auto_saved_notes", [])
+    if auto_notes:
+        digest["auto_saved_notes"] = auto_notes
     atomic_write_json(base / "digests" / (digest_id + ".json"), digest)
 
-    state = load_state(base)
     state["last_end"] = package["window"]["end"]
     for run in state.get("runs", []):
         if run.get("run_id") == package["run_id"]:
@@ -960,11 +1049,12 @@ def finalize_run(base, run_dir, package, analysis):
 def render_digest(digest, intents=None):
     start = parse_iso(digest["window"]["start"])
     end = parse_iso(digest["window"]["end"])
-    lines = [
-        "Fluent · chat %s → %s · Mã %s" % (
-            start.strftime("%d/%m %H:%M"), end.strftime("%d/%m %H:%M"), digest.get("digest_id", "")
-        )
-    ]
+    lines = list(digest.get("auto_saved_notes", []))
+    if lines:
+        lines.append("")
+    lines.append("Fluent · chat %s → %s · Mã %s" % (
+        start.strftime("%d/%m %H:%M"), end.strftime("%d/%m %H:%M"), digest.get("digest_id", "")
+    ))
     coverage = digest.get("coverage", {})
     parts = []
     missing = []
@@ -1001,7 +1091,10 @@ def render_digest(digest, intents=None):
         lines.append("Chưa có ý định nào lặp lại đủ 2 lần.")
     lines.append("")
     lines.append("Đang chờ: %d ý định mới gặp 1 lần." % digest.get("pending_count", 0))
-    lines.append('Trả lời "duyệt hết", "duyệt E1 V2" hoặc "bỏ E3" để lưu vào thẻ ôn.')
+    if digest.get("auto_approve_at") and digest.get("status") == "awaiting_approval":
+        lines.append(auto_footer(digest["auto_approve_at"]))
+    else:
+        lines.append('Trả lời "duyệt hết", "duyệt E1 V2" hoặc "bỏ E3" để lưu vào thẻ ôn.')
     return "\n".join(lines)
 
 
@@ -1242,24 +1335,54 @@ def approve(args):
             print("error: approve requires --all, --select, or --reject", file=sys.stderr)
             return 2
         keys = available_keys(digest)
+        explicit_reject = set()
+        if args.reject:
+            explicit_reject = set(part.strip() for part in args.reject.split(",") if part.strip())
+        auto_reject_only = bool(
+            args.reject and not args.all and not args.select
+            and digest.get("auto_approve_at") and digest.get("status") == "awaiting_approval"
+        )
+        if auto_reject_only:
+            unknown = explicit_reject - keys
+            if unknown:
+                print("error: unknown digest keys: %s" % ",".join(sorted(unknown)), file=sys.stderr)
+                return 2
+            decided_at = minute_dt(datetime.now(LOCAL_TZ)).isoformat()
+            old = digest.get("decision") or {}
+            selected = set(old.get("selected", [])) - explicit_reject
+            rejected = set(old.get("rejected", [])) | explicit_reject
+            digest["decision"] = {
+                "selected": sorted(selected),
+                "rejected": sorted(rejected),
+                "decided_at": decided_at,
+            }
+            digest["status"] = "awaiting_approval"
+            apply_digest_intent_decision(base, digest, selected, rejected, decided_at)
+            atomic_write_json(path, digest)
+            print("Đã bỏ %s. Các mục còn lại sẽ tự lưu lúc %s" % (
+                ",".join(sorted(explicit_reject)), auto_time_text(digest.get("auto_approve_at"))))
+            return 0
+
         selected = set()
         rejected = set()
+        old = digest.get("decision") or {}
+        already_rejected = set(old.get("rejected", [])) if digest.get("auto_approve_at") else set()
         if args.all:
-            selected = set(keys)
+            selected = set(keys) - already_rejected
         if args.select:
-            selected = set(part.strip() for part in args.select.split(",") if part.strip())
+            selected = set(part.strip() for part in args.select.split(",") if part.strip()) - already_rejected
             rejected = set(keys) - selected
         if args.reject:
-            explicit = set(part.strip() for part in args.reject.split(",") if part.strip())
-            rejected |= explicit
-            selected -= explicit
+            rejected |= explicit_reject
+            selected -= explicit_reject
+        rejected |= already_rejected
         unknown = (selected | rejected) - keys
         if unknown:
             print("error: unknown digest keys: %s" % ",".join(sorted(unknown)), file=sys.stderr)
             return 2
         decided_at = minute_dt(datetime.now(LOCAL_TZ)).isoformat()
         new_decision = {"selected": sorted(selected), "rejected": sorted(rejected), "decided_at": decided_at}
-        if digest.get("decision"):
+        if digest.get("decision") and not (digest.get("auto_approve_at") and digest.get("status") == "awaiting_approval"):
             old = digest["decision"]
             if set(old.get("selected", [])) == selected and set(old.get("rejected", [])) == rejected:
                 if digest.get("status") == "imported":
@@ -1277,22 +1400,11 @@ def approve(args):
                 return 0
             print("error: digest already has a different decision", file=sys.stderr)
             return 2
-        intents = load_intents(base)
-        for row in digest.get("expressions", []):
-            intent = intents.get(row.get("intent_id"))
-            if not intent:
-                continue
-            if row.get("key") in selected:
-                intent["status"] = "approved"
-                intent["card_id"] = "chat_expr_" + row["intent_id"]
-            elif row.get("key") in rejected:
-                intent["status"] = "pending"
-                intent["counting_since"] = decided_at
-            intent["updated_run"] = digest.get("run_id")
+        enable_auto_approve(base, selected)
+        apply_digest_intent_decision(base, digest, selected, rejected, decided_at)
         digest["decision"] = new_decision
         digest["status"] = "approved"
         atomic_write_json(path, digest)
-        save_intents(base, intents)
         print("status: approved")
         print("selected: %s" % ",".join(sorted(selected)))
         print("rejected: %s" % ",".join(sorted(rejected)))
@@ -1375,6 +1487,14 @@ def status_command(args):
                 approved_not_imported.append(row.get("digest_id", path.stem))
     print("digests_awaiting_approval: %s" % ",".join(awaiting))
     print("digests_approved_not_imported: %s" % ",".join(approved_not_imported))
+    print("auto_approve: %s" % ("on" if state.get("auto_approve_enabled_at") else "off"))
+    pending_auto = []
+    if digest_dir.exists():
+        for path in sorted(digest_dir.glob("*.json")):
+            row = read_json(path, {})
+            if row.get("status") == "awaiting_approval" and row.get("auto_approve_at"):
+                pending_auto.append("%s@%s" % (row.get("digest_id", path.stem), auto_time_text(row.get("auto_approve_at"))))
+    print("pending_auto_approvals: %s" % ",".join(pending_auto))
     counts = {"pending": 0, "proposed": 0, "approved": 0, "expired": 0}
     for intent in intents.values():
         counts[intent.get("status", "pending")] = counts.get(intent.get("status", "pending"), 0) + 1

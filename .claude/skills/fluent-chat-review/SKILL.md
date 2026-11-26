@@ -37,6 +37,10 @@ The learner answers a digest in their own words. Map the answer to one command:
 | "duyệt E1 V2" | `REVIEW approve --digest <ID> --select E1,V2` (everything else in that digest is rejected) |
 | "bỏ E3", "bỏ V1" (nothing approved) | `REVIEW approve --digest <ID> --reject E3` |
 
+After the learner's first approval, later digests save themselves at the next
+nightly run (the digest footer says when). Until then the learner can still
+reject items with "bỏ …" (rejections add up) or save at once with "duyệt hết".
+
 - `<ID>` is the `Mã` on the digest they answered. If it is unclear which
   digest they mean, run `REVIEW status` and ask one short question.
 - Never approve on your own initiative or from an ambiguous reply.

@@ -235,6 +235,174 @@ class ChatImportTest(DAILY_TESTS.DailyChatReviewTest):
         payload = json.loads(proc.stdout)
         self.assertIn(card_id, payload["computed"]["due_review_items"])
 
+    def digest_json(self, digest_id):
+        return self.load_json(self.base / "digests" / (digest_id + ".json"))
+
+    def seed_proposed_intent(self):
+        intents = self.intents()
+        intents["int_seed"] = {
+            "summary": "inspect before editing", "audience": "coding agent",
+            "constraints": ["investigate first"], "status": "proposed",
+            "occurrences": [
+                {"session_key": "codex:a", "date": "2026-01-15",
+                 "turn_ref": {"source": "codex", "session_id": "a", "turn_id": "t1", "timestamp": "2026-01-15T03:00:00Z"}},
+                {"session_key": "codex:b", "date": "2026-01-15",
+                 "turn_ref": {"source": "codex", "session_id": "b", "turn_id": "t1", "timestamp": "2026-01-15T03:05:00Z"}},
+            ],
+            "evidence": ["kiểm tra trước"],
+            "counting_since": None,
+            "expression": {
+                "scenario": "A production job failed and you want diagnosis before any edit. What do you say?",
+                "model_answer": "Please investigate the failure first and wait for my approval before editing.",
+                "note_vi": "Nêu rõ cần chẩn đoán trước khi sửa.",
+            },
+            "card_id": None, "created_run": "seed", "updated_run": "seed",
+        }
+        self.write_intents(intents)
+
+    def make_auto_digest(self):
+        day = datetime(2026, 1, 16).date()
+        dt = DAILY_TESTS.local_dt(day, 10)
+        self.write_codex_session("s-auto-e1", ["I goes home now."], dt=dt)
+        self.write_codex_session("s-auto-e2", ["She don't know yet."], dt=dt)
+        proc = self.prepare("2026-01-16T20:30:00+07:00")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        package = self.package()
+        errors = []
+        for index, item in enumerate(package["english_items"], 1):
+            first = "I goes" in item.get("text", "")
+            quote = "I goes" if first else "don't"
+            correction = "I go" if first else "doesn't"
+            pattern = "subject_verb_agreement" if first else "auxiliary_agreement"
+            errors.append({
+                "item_id": item["item_id"], "quote": quote, "correction": correction,
+                "pattern_id": pattern, "pattern_summary": pattern.replace("_", " "),
+                "category": "grammar", "subcategory": pattern, "severity": "high",
+                "explanation_vi": "Giải thích ngắn."})
+        analysis = {"run_id": package["run_id"], "english_errors": errors,
+                    "intents": [], "expressions": [], "skipped": []}
+        proc = self.ingest_analysis(analysis)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return self.latest_run()["digest_id"]
+
+    def enable_auto_mode(self):
+        digest_id = self.decided_digest()
+        self.assertNotIn("auto_approve_at", self.digest_json(digest_id))
+        proc = self.approve(digest_id, "--all")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(self.state().get("auto_approve_enabled_at"))
+
+    def test_auto_mode_footer_reject_accumulation_and_delayed_import(self):
+        self.enable_auto_mode()
+        self.seed_proposed_intent()
+        digest_id = self.make_auto_digest()
+        digest = self.digest_json(digest_id)
+        self.assertEqual(digest.get("auto_approve_at"), "2026-01-17T20:30:00+07:00")
+        rendered = self.run_cli("digest", "show", digest_id).stdout
+        self.assertIn('Tự lưu lúc 20:30 17/01 trừ mục anh trả lời "bỏ …"', rendered)
+
+        proc = self.approve(digest_id, "--reject", "E1")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("Đã bỏ E1", proc.stdout)
+        proc = self.approve(digest_id, "--reject", "E2")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        digest = self.digest_json(digest_id)
+        self.assertEqual(digest["status"], "awaiting_approval")
+        self.assertEqual(digest["decision"]["rejected"], ["E1", "E2"])
+
+        proc = self.prepare("2026-01-17T19:29:00+07:00")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("Đã tự lưu bản", proc.stdout)
+        self.assertEqual(self.digest_json(digest_id)["status"], "awaiting_approval")
+
+        proc = self.prepare("2026-01-17T19:30:00+07:00")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("\nĐã tự lưu bản %s:" % digest_id, proc.stdout)
+        note_pos = proc.stdout.index("Đã tự lưu bản %s:" % digest_id)
+        self.assertLess(note_pos, proc.stdout.index("Fluent · chat"))
+        digest = self.digest_json(digest_id)
+        self.assertEqual(digest["status"], "imported")
+        self.assertTrue(digest["decision"].get("auto"))
+        self.assertEqual(digest["decision"]["selected"], ["V1"])
+        mistakes = self.read_db_file("mistakes-db.json")
+        self.assertNotIn("auxiliary_agreement", mistakes.get("error_patterns", {}))
+        sr = self.read_db_file("spaced-repetition.json")
+        self.assertIn("chat_expr_int_seed", sr["items"])
+        latest = self.digest_json(self.latest_run()["digest_id"])
+        self.assertTrue(latest.get("auto_saved_notes"))
+        self.assertTrue(latest["auto_saved_notes"][0].startswith("Đã tự lưu bản %s:" % digest_id))
+
+    def test_explicit_all_on_auto_digest_imports_immediately_minus_rejections(self):
+        self.enable_auto_mode()
+        self.seed_proposed_intent()
+        digest_id = self.make_auto_digest()
+        self.assertEqual(self.approve(digest_id, "--reject", "E1").returncode, 0)
+        proc = self.approve(digest_id, "--all")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        digest = self.digest_json(digest_id)
+        self.assertEqual(digest["status"], "imported")
+        self.assertEqual(digest["decision"]["selected"], ["E2", "V1"])
+        mistakes = self.read_db_file("mistakes-db.json")
+        self.assertNotIn("auxiliary_agreement", mistakes["error_patterns"])
+        self.assertEqual(mistakes["error_patterns"]["subject_verb_agreement"]["frequency"], 2)
+        # E1 was auxiliary_agreement in this digest and was rejected; selected E2 is the
+        # subject/verb pattern, adding one frequency to the enabling digest's first row.
+
+    def test_auto_saved_note_is_rendered_by_later_ingest(self):
+        self.enable_auto_mode()
+        self.seed_proposed_intent()
+        digest_id = self.make_auto_digest()
+        day = datetime(2026, 1, 17).date()
+        self.write_codex_session("s-next-ingest", ["He don't understand it."], dt=DAILY_TESTS.local_dt(day, 10))
+        proc = self.prepare("2026-01-17T19:30:00+07:00")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("status: needs_analysis", proc.stdout)
+        package = self.package()
+        item = package["english_items"][0]["item_id"]
+        analysis = {"run_id": package["run_id"], "english_errors": [{
+            "item_id": item, "quote": "don't", "correction": "doesn't",
+            "pattern_id": "auxiliary_agreement", "pattern_summary": "Auxiliary agreement",
+            "category": "grammar", "subcategory": "auxiliary_agreement", "severity": "high",
+            "explanation_vi": "Giải thích ngắn."}], "intents": [], "expressions": [], "skipped": []}
+        proc = self.ingest_analysis(analysis)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        note_pos = proc.stdout.index("Đã tự lưu bản %s:" % digest_id)
+        self.assertLess(note_pos, proc.stdout.index("Fluent · chat"))
+        self.assertIn("2 lỗi tiếng Anh, 1 thẻ cách diễn đạt", proc.stdout)
+        latest = self.digest_json(self.latest_run()["digest_id"])
+        self.assertTrue(latest.get("auto_saved_notes"))
+        self.assertEqual(self.digest_json(digest_id)["status"], "imported")
+        mistakes = self.read_db_file("mistakes-db.json")
+        self.assertEqual(mistakes["error_patterns"]["subject_verb_agreement"]["frequency"], 2)
+        self.assertEqual(mistakes["error_patterns"]["auxiliary_agreement"]["frequency"], 1)
+
+    def test_auto_import_failure_leaves_approved_not_imported_and_prepare_succeeds(self):
+        self.enable_auto_mode()
+        self.seed_proposed_intent()
+        digest_id = self.make_auto_digest()
+        lock_path = self.data / ".fluent-db.lock"
+        lock_path.touch()
+        handle = open(str(lock_path), "a+")
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        env = os.environ.copy()
+        env["FLUENT_DATA_DIR"] = str(self.data)
+        env["FLUENT_DB_LOCK_TIMEOUT"] = "1"
+        try:
+            proc = subprocess.run([sys.executable, str(DAILY_SCRIPT), "prepare", "--home", str(self.home),
+                                   "--no-orca", "--now", "2026-01-17T19:30:00+07:00"],
+                                  capture_output=True, text=True, env=env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("Chưa lưu được bản %s" % digest_id, proc.stdout)
+            digest = self.digest_json(digest_id)
+            self.assertEqual(digest["status"], "approved")
+            self.assertNotIn(digest_id, self.read_db_file("mistakes-db.json").get("metadata", {}).get("chat_imports", []))
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
+        proc = self.import_digest(digest_id)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.digest_json(digest_id)["status"], "imported")
+
     def test_crash_during_second_save_is_atomic_and_retry_succeeds(self):
         digest_id = self.decided_digest()
         lock_path = self.data / ".fluent-db.lock"; lock_path.touch()
